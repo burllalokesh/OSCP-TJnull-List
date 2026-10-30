@@ -187,3 +187,20 @@ SSH         10.129.227.77   22     10.129.227.77    [+] Nadine:L1k3B1gBut7s@W0rk
 
 Got the access 
 
+privilage esclation ran the winpease.exe
+
+found soome intteranl services are running 
+
+which we done the nmap scan we found that there is ahttp running on 8443 port with the "NSClient++" on it 
+
+done port forwarding using the ssh 
+
+ssh -L 8443:127.0.0.1:8443 Nadine@10.129.227.77
+
+found the runninh web application on 127.0.0.1:8443 and there is a forgetpassword option where i can see 
+these options 
+
+
+
+C:\Program Files\NSClient++>nscp.exe web -- password --display   
+Current password: ew2x6SsGTxjRwXOT
