@@ -72,8 +72,25 @@ So we need the following header to access the dev subdomain: Special-Dev: only4d
 
 now able to access the Dev.siteisup.htb
 
+Upload List / Find Uploads
 
+I’ll create a simple text file with some sites in it to check:
 
+hackthebox.com
+10.10.14.6
+10.10.10.10
 
+I don’t expect it to reach the first or third one, but I’ll start a Python webserver on mine. When I upload the file, it hangs for a bit, and then returns:
+
+/uploads has directory listing turned on:
+
+I’m going to abuse the PHP Archive or PHAR format to get execution here. This is very similar to abusing the zip PHP stream wrapper way back in CrimeStoppers. The phar:// wrapper works with the format phar://[archive path]/[file inside the archive]. This means I can craft a URL that points to phar://0xdf.0xdf/info.php (where I’ll let the site add the .php to the end), and that file will be run from within the archive.
+phpinfo POC
+
+To test this, I’ll try creating a file that just calls phpinfo, and call it info.php:
+
+<?php phpinfo(); ?>
+
+I’ll put it into a zip archive:
 
 
